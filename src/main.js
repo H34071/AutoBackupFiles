@@ -8,79 +8,58 @@ const {
   Menu,
   Notification,
 } = require("electron");
-const isDev = require('electron-is-dev');
+const isDev = require("electron-is-dev");
 
 const path = require("path");
 const FtpClient = require("ftp");
 const moment = require("moment");
 const fs = require("fs");
 const { errorMonitor } = require("stream");
-const client = new FtpClient();
+const clientA = new FtpClient();
+const clientB = new FtpClient();
 
 let files = [];
+let transferFiles = [];
 let downloadedFilesLength = 0;
 let tray;
 let mainWindow;
 let progressInterval;
 const NOTIFICATION_TITLE = "Auto Backup Files";
 let NOTIFICATION_BODY = "Ứng dụng dành riêng cho anh Định đã mở!";
-const ftpConfig = {
+
+const ftpConfigA = {
   host: "172.16.40.31",
   user: "H34071",
   password: "34071",
 };
 
+const ftpConfigB = {
+  host: "172.16.40.7",
+  user: "install",
+  password: "Lelong@2022#",
+};
+
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (require("electron-squirrel-startup")) {
   app.quit();
-  client.close();
+  clientA.close();
 }
 
 async function connectToFtp() {
   try {
-    // ssh
-    //   .connect(sshConfig)
-    //   .then(() => {
-    //     console.log("Connected to SSH server");
-
-    //     // Thực hiện các hoạt động SSH ở đây
-
-    //     // Đóng kết nối SSH sau khi hoàn thành
-    //     ssh.dispose();
-    //   })
-    //   .catch((err) => {
-    //     console.error("SSH connection error:", err);
-    //   });
-    // const sshConnection = new ClientSSH();
-
-    // sshConnection
-    //   .on('ready', () => {
-    //     console.log('Kết nối SSH thành công');
-
-    //     // Chạy lệnh rsync qua SSH
-    //     // rsync(rsyncOptions, (error, stdout, stderr, cmd) => {
-    //     //   if (error) {
-    //     //     console.error('Rsync thất bại:', error);
-    //     //   } else {
-    //     //     console.log('Rsync hoàn thành thành công');
-    //     //   }
-
-    //     //   // Đóng kết nối SSH
-    //     //   sshConnection.end();
-    //     // });
-    //   })
-    //   .on('error', (err) => {
-    //     console.error('Lỗi kết nối SSH:', err);
-    //   })
-    //   .connect(sshConfig);
-
     await new Promise((resolve, reject) => {
-      client.on("ready", resolve);
-      client.on("error", reject);
-      client.connect(ftpConfig);
+      clientA.on("ready", resolve);
+      clientA.on("error", reject);
+      clientA.connect(ftpConfigA);
     });
 
-    return client.connected;
+    await new Promise((resolve, reject) => {
+      clientB.on("ready", resolve);
+      clientB.on("error", reject);
+      clientB.connect(ftpConfigB);
+    });
+
+    return clientA.connected && clientB.connected;
   } catch (error) {
     console.error("FTP connection failed:", error);
     return false;
@@ -144,7 +123,7 @@ const createWindow = () => {
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
 app.on("ready", () => {
-  checkForUpdates();
+  // checkForUpdates();
   createWindow();
   showNotification();
   const icon = nativeImage.createFromPath(`./src/images/cloud-folder.png`);
@@ -195,16 +174,13 @@ app.on("activate", () => {
 ipcMain.handle("loadData", async (event, arg) => {
   try {
     const remotePath = "/u3/backup/exp/";
-    const localPath = path.join(app.getPath("userData"), "backup");
-    const previousDate = moment().subtract(1, "day").format("YYYY-MM-DD");
 
-    if (!fs.existsSync(localPath)) {
-      fs.mkdirSync(localPath);
-    }
+    // const localPath = path.join(app.getPath("userData"), "backup");
+    const previousDate = moment().subtract(1, "day").format("YYYY-MM-DD");
 
     files = await new Promise((resolve, reject) => {
       try {
-        client.list(remotePath, (err, files) => {
+        clientA.list(remotePath, (err, files) => {
           if (err) reject(err);
           resolve(files);
         });
@@ -228,17 +204,21 @@ ipcMain.handle("loadData", async (event, arg) => {
   }
 });
 
-ipcMain.handle("getDownloadedFiles", (event) => {
-  const localPath = path.join(app.getPath("userData"), "backup");
-  let downloadFiles = [];
-  fs.readdir(localPath, (err, files) => {
-    if (err) {
-      console.error("Error reading downloaded files:", err);
-      return;
+ipcMain.handle("getDownloadedFiles", async (event) => {
+  const localPath = "home\test_auto_backup";
+
+  transferFiles = await new Promise((resolve, reject) => {
+    try {
+      clientB.list(localPath, (err, files) => {
+        if (err) reject(err);
+        resolve(files);
+      });
+    } catch (error) {
+      console.log(error.message);
     }
-    downloadFiles = files;
   });
-  return downloadFiles;
+
+  return transferFiles;
 });
 
 ipcMain.handle("connectToFtp", (event) => {
@@ -250,7 +230,9 @@ ipcMain.on("DownloadFile", async (event, fileToDownload) => {
   const fileName = fileToDownload.name;
   const fileSize = fileToDownload.size;
   const remotePath = "/u3/backup/exp/";
-  const localPath = path.join(app.getPath("userData"), "backup");
+  const localPath = "/home/test_auto_backup/";
+
+  // const localPath = path.join(app.getPath("userData"), "backup");
 
   let remoteFilePath = path.join(remotePath, fileName);
   let localFilePath = path.join(localPath, fileName);
@@ -265,32 +247,53 @@ ipcMain.on("DownloadFile", async (event, fileToDownload) => {
 
   try {
     // Kiểm tra file chưa hoàn thành quá trình tải dữ liệu
-    if (fs.existsSync(fileTemp)) {
-      localSize = fs.statSync(fileTemp).size;
+    transferFiles = await new Promise((resolve, reject) => {
+      try {
+        clientB.list(localPath, (err, files) => {
+          if (err) reject(err);
+          resolve(files);
+        });
+      } catch (error) {
+        console.log(error.message);
+      }
+    });
+
+    console.log(transferFiles);
+
+    const unTransferFile = transferFiles.filter(
+      (file) => file?.name === fileTemp
+    )[0];
+
+    if (unTransferFile) {
+      localSize = unTransferFile.size;
       positionIndexDownload = localSize;
     }
 
-    // // Kiểm tra file đã hoàn thành quá trình tải dữ liệu
+    const transferedFile = transferFiles.filter(
+      (file) => file?.name === localFilePath
+    )[0];
+
+    // Kiểm tra file đã hoàn thành quá trình tải dữ liệu
     if (
-      fs.existsSync(localFilePath) &&
+      transferedFile &&
       localSize > 0 &&
       positionIndexDownload === localSize
     ) {
-      localSize = fs.statSync(localFilePath).size;
+      localSize = ftransferedFile.size;
       positionIndexDownload = localSize;
     }
 
-    if (
-      fs.existsSync(fileTemp) &&
-      localSize > 0 &&
-      positionIndexDownload === localSize
-    ) {
-      fs.rename(fileTemp, localFilePath, (err) => {
-        if (err) {
-          console.log(err);
-        }
-      });
-    }
+    // if (
+    // fs.existsSync(fileTemp) &&
+    // localSize > 0 &&
+    // positionIndexDownload === localSize
+    // ) {
+    // fs.rename(fileTemp, localFilePath, (err) => {
+    //   if (err) {
+    //     console.log(err);
+    //   }
+    // });
+    // }
 
     // File hợp lệ đã được tải
     if (localSize > 0 && positionIndexDownload === fileSize) {
@@ -326,9 +329,14 @@ ipcMain.on("DownloadFile", async (event, fileToDownload) => {
     if (isFinished) {
       console.log("Downloaded");
       showNotification(`File ${fileName} đã tải xong rồi anh Định ơi!`);
-      fs.rename(fileTemp, localFilePath, (error) => {
-        if (error) console.log(error.message);
-      });
+      console.log(fileTemp, localFilePath);
+      
+      clientB.rename(fileTemp, localFilePath, (err) => {
+        if (err) {
+          console.log(err);
+        }
+      })
+
       event?.sender.send("DownloadFinished", fileName);
 
       const filesDownloaded = fs.readdirSync(localPath);
@@ -370,39 +378,55 @@ async function downloadFile({
     const currentDate = moment().format("YYYY-MM-DD");
 
     // moment(currentDate).isSame(fileDate)
-    if (!fs.existsSync(localFilePath)) {
-      const tempFilePath = localFilePath + ".tmp";
+    // if (!fs.existsSync(localFilePath)) {
+    const tempFilePath = localFilePath + ".tmp";
+    // await new Promise((resolve, reject) => {
+    //   clientA.get(remoteFilePath, (err, stream) => {
+    //     if (err) {
+    //       console.error(`Error getting stream: ${err.message}`);
+    //       reject(err);
+    //       return;
+    //     }
 
-      await new Promise((resolve, reject) => {
-        client.get(remoteFilePath, (err, stream) => {
-          if (err) {
-            console.error(`Error getting stream: ${err.message}`);
-            reject(err);
-            return;
-          }
+    //     const fileStream = fs.createWriteStream(tempFilePath);
 
-          const fileStream = fs.createWriteStream(tempFilePath);
+    //     fileStream.on("open", () => {
+    //       console.log(`Started writing to file: ${fileName}`);
+    //       event.sender.send("Downloading", fileName);
+    //     });
 
-          fileStream.on("open", () => {
-            console.log(`Started writing to file: ${fileName}`);
-            event.sender.send("Downloading", fileName);
-          });
+    //     fileStream.on("close", () => {
+    //       isFinished = true;
+    //       event.sender.send("DownloadFinished", fileName);
+    //       resolve();
+    //     });
 
-          fileStream.on("close", () => {
-            isFinished = true;
-            event.sender.send("DownloadFinished", fileName);
-            resolve();
-          });
+    //     fileStream.on("error", (err) => {
+    //       console.error(`Error writing to file: ${err.message}`);
+    //       reject(err);
+    //     });
 
-          fileStream.on("error", (err) => {
-            console.error(`Error writing to file: ${err.message}`);
-            reject(err);
-          });
+    //     stream.pipe(fileStream);
+    //   });
+    // });
+    // }
 
-          stream.pipe(fileStream);
-        });
+    clientA.get(remoteFilePath, (err, stream) => {
+      if (err) {
+        console.error(`Error getting stream: ${err.message}`);
+        return;
+      }
+      event.sender.send("Downloading", fileName);
+
+      clientB.put(stream, tempFilePath, (err) => {
+        if (err) {
+          console.error(`Error uploading file: ${err.message}`);
+          return;
+        }
+        isFinished = true;
+        console.log(`File uploaded successfully to ${tempFilePath}`);
       });
-    }
+    });
 
     return isFinished;
   } catch (error) {
@@ -426,7 +450,7 @@ async function reDownloadFile({
   }
 
   try {
-    client.restart(position, (err) => {
+    clientA.restart(position, (err) => {
       if (err) {
         console.log(err);
       }
@@ -434,7 +458,7 @@ async function reDownloadFile({
     });
 
     await new Promise((resolve, reject) => {
-      client.get(remoteFilePath, (err, ftpStream) => {
+      clientA.get(remoteFilePath, (err, ftpStream) => {
         if (err) {
           console.error(`Error getting stream: ${err.message}`);
           reject(err);
@@ -474,19 +498,18 @@ function showNotification(message = NOTIFICATION_BODY) {
   new Notification({ title: NOTIFICATION_TITLE, body: message }).show();
 }
 
+// function checkForUpdates() {
+//   if (!isDev) {
+//     autoUpdater.setFeedURL({
+//       provider: 'generic',
+//       url: '\\172.16.40.17\資訊室\資訊人員的資料夾(DuLieuCuaCaNhan)\Loi\auto_backup',
+//     });
 
-function checkForUpdates() {
-  if (!isDev) {
-    autoUpdater.setFeedURL({
-      provider: 'generic',
-      url: '\\172.16.40.17\資訊室\資訊人員的資料夾(DuLieuCuaCaNhan)\Loi\auto_backup',
-    });
+//     autoUpdater.checkForUpdates();
 
-    autoUpdater.checkForUpdates();
-
-    autoUpdater.on('update-downloaded', () => {
-      // Khi cập nhật đã được tải về, hiển thị thông báo hoặc thông báo người dùng.
-      autoUpdater.quitAndInstall();
-    });
-  }
-}
+//     autoUpdater.on('update-downloaded', () => {
+//       // Khi cập nhật đã được tải về, hiển thị thông báo hoặc thông báo người dùng.
+//       autoUpdater.quitAndInstall();
+//     });
+//   }
+// }

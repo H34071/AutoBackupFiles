@@ -11,7 +11,6 @@
     "publish": "electron-forge publish",
     "lint": "echo \"No linting configured\""
   },
-
   "keywords": [],
   "author": {
     "name": "lamloi1109",
@@ -26,12 +25,12 @@
     "@electron-forge/maker-zip": "^7.2.0",
     "@electron-forge/plugin-auto-unpack-natives": "^7.2.0",
     "@electron-forge/plugin-vite": "^7.2.0",
+    "@electron-forge/publisher-github": "^7.2.0",
     "electron": "28.0.0",
     "electron-builder": "^24.9.1",
     "tailwindcss": "^3.3.6"
   },
   "dependencies": {
-    "@electron-forge/publisher-github": "^7.2.0",
     "basic-ftp": "^5.0.4",
     "electron-is-dev": "^2.0.0",
     "electron-squirrel-startup": "^1.0.0",
